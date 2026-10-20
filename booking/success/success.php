@@ -1,0 +1,237 @@
+<?php
+session_start();
+require_once __DIR__ . '/../../api/config/database.php';
+
+// Nhận mã đặt chỗ từ URL — bắt buộc có — không có giá trị mặc định
+$code   = trim($_GET['code'] ?? '');
+$booking= null;
+$paxList= [];
+
+if (empty($code)) {
+    header('Location: /WebsiteDatVe/index.php');
+    exit;
+}
+
+if ($conn) {
+    $stmt = mysqli_prepare($conn, 
+        "SELECT b.*, f.flight_number, f.airline, f.from_airport, f.to_airport, f.depart_at, f.arrive_at, f.gate,
+                dep.city AS from_city, arr.city AS to_city
+         FROM bookings b
+         JOIN flights f ON b.flight_id = f.id
+         JOIN airports dep ON f.from_airport = dep.code
+         JOIN airports arr ON f.to_airport = arr.code
+         WHERE b.booking_code = ? LIMIT 1"
+    );
+    mysqli_stmt_bind_param($stmt, "s", $code);
+    mysqli_stmt_execute($stmt);
+    $res    = mysqli_stmt_get_result($stmt);
+    $booking= mysqli_fetch_assoc($res);
+    mysqli_stmt_close($stmt);
+
+    if ($booking) {
+        $bId  = (int)$booking['id'];
+        $pRes = mysqli_query($conn,
+            "SELECT p.*, fs.seat_code
+             FROM passengers p LEFT JOIN flight_seats fs ON fs.id = p.flight_seat_id
+             WHERE p.booking_id = {$bId}
+             ORDER BY p.id"
+        );
+        if ($pRes) {
+            while ($pRow = mysqli_fetch_assoc($pRes)) {
+                $paxList[] = $pRow;
+            }
+        }
+    }
+}
+
+// Nếu không tìm thấy đơn → chuyển về trang chủ
+if (!$booking) {
+    header('Location: /WebsiteDatVe/index.php');
+    exit;
+}
+
+$name      = $booking['contact_name'];
+$flight    = $booking['airline'] . ' (' . $booking['flight_number'] . ')';
+$total     = (int)$booking['total_price'];
+$route     = $booking['from_city'] . ' ➔ ' . $booking['to_city'];
+$departTime= date('H:i - d/m/Y', strtotime($booking['depart_at']));
+$gate      = $booking['gate'];
+$seats     = [];
+foreach ($paxList as $index => $p) {
+    if (!empty($p['seat_code'])) {
+        $passengerName = trim($p['first_name'] . ' ' . $p['last_name']);
+        $seats[] = 'Hành khách ' . ($index + 1) . ' (' . $passengerName . '): ' . $p['seat_code'];
+    }
+}
+$seatsStr = !empty($seats) ? implode(', ', $seats) : 'Chưa chọn';
+?>
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đặt vé thành công - Booking Online</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Plus Jakarta Sans"', 'sans-serif'] },
+                    colors: {
+                        primary: { DEFAULT: '#0284c7', hover: '#0369a1', light: '#e0f2fe' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>body { font-family: 'Plus Jakarta Sans', sans-serif; }</style>
+</head>
+<body class="bg-slate-50 text-slate-800 flex flex-col min-h-screen">
+    <!-- NAVBAR -->
+    <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+            <a href="/WebsiteDatVe/index.php" class="flex items-center gap-2">
+                <span class="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center shadow-md shadow-sky-500/20">
+                    <i class="fa-solid fa-plane text-lg"></i>
+                </span>
+                <span class="text-xl font-extrabold tracking-tight text-slate-900">Booking Online</span>
+            </a>
+
+            <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+                <a href="/WebsiteDatVe/index.php" class="hover:text-primary transition">Trang chủ</a>
+                <a href="/WebsiteDatVe/check-in/check-in.php" class="hover:text-primary transition">Check-in</a>
+                <a href="/WebsiteDatVe/flight-status/flight-status.php" class="hover:text-primary transition">Tình trạng bay</a>
+                <a href="/WebsiteDatVe/manage-booking/manage-booking.php" class="hover:text-primary transition">Quản lý vé</a>
+                <a href="/WebsiteDatVe/services/services.php" class="hover:text-primary transition">Dịch vụ</a>
+                <?php if (in_array($_SESSION['user']['role'] ?? '', ['super_admin', 'flight_manager', 'support', 'accountant'], true)): ?>
+                    <a href="/WebsiteDatVe/admin/admin.php" class="text-purple-600 font-semibold hover:text-purple-700 transition flex items-center gap-1">
+                        <i class="fa-solid fa-gauge"></i> Admin
+                    </a>
+                <?php endif; ?>
+            </nav>
+
+            <div class="flex items-center gap-3">
+                <?php if (!empty($_SESSION['user'])): ?>
+                    <a href="/WebsiteDatVe/account/account.php" aria-label="Tài khoản hội viên" title="Tài khoản hội viên" class="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-primary transition hover:border-primary hover:bg-primary-light focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2">
+                        <i class="fa-solid fa-user text-base" aria-hidden="true"></i>
+                    </a>
+                    <a href="/WebsiteDatVe/login/logout.php" class="px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition">Đăng xuất</a>
+                <?php else: ?>
+                    <a href="/WebsiteDatVe/login/login.php" class="px-4 py-2 text-sm font-semibold text-slate-700 hover:text-primary hover:bg-slate-100 rounded-xl transition">Đăng nhập</a>
+                    <a href="/WebsiteDatVe/register/register.php" class="px-4 py-2 text-sm font-semibold text-white bg-primary hover:bg-primary-hover rounded-xl shadow-md shadow-sky-500/20 transition">Đăng ký</a>
+                <?php endif; ?>
+            </div>
+        </div>
+    </header>
+
+<div class="border-b border-slate-200 bg-white">
+    <nav class="mx-auto flex max-w-5xl items-center justify-center gap-3 overflow-x-auto px-4 py-4 text-xs font-semibold sm:text-sm">
+        <span class="whitespace-nowrap text-emerald-600">1. Chọn chuyến</span><span class="text-slate-300">—</span>
+        <span class="whitespace-nowrap text-emerald-600">2. Hành khách</span><span class="text-slate-300">—</span>
+        <span class="whitespace-nowrap text-emerald-600">3. Dịch vụ</span><span class="text-slate-300">—</span>
+        <span class="whitespace-nowrap text-emerald-600">4. Thanh toán</span><span class="text-slate-300">—</span>
+        <span class="whitespace-nowrap font-extrabold text-primary">5. Hoàn tất</span>
+    </nav>
+</div>
+
+<main class="max-w-2xl mx-auto px-4 sm:px-6 py-12 flex-1 w-full text-center">
+    <div class="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-4xl mx-auto mb-6 shadow-md shadow-emerald-500/20">
+        <i class="fa-solid fa-check"></i>
+    </div>
+
+    <h1 class="text-3xl font-black text-slate-900">Đặt vé thành công!</h1>
+    <p class="text-sm text-slate-500 mt-2">Cảm ơn bạn đã lựa chọn Booking Online. Vé điện tử đã được gửi về email của bạn.</p>
+
+    <!-- CHI TIẾT VÉ ĐIỆN TỬ -->
+    <div class="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xl text-left mt-8 space-y-4">
+        <div class="flex justify-between items-center border-b border-slate-100 pb-4">
+            <div>
+                <p class="text-xs text-slate-400 font-bold uppercase">Mã đặt chỗ (PNR)</p>
+                <p class="text-2xl font-black text-primary tracking-wider"><?= htmlspecialchars($code) ?></p>
+            </div>
+            <span class="px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-full text-xs font-bold">
+                Đã xác nhận
+            </span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 text-sm">
+            <div>
+                <p class="text-xs text-slate-400">Hành khách:</p>
+                <p class="font-bold text-slate-800"><?= htmlspecialchars($name) ?></p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-400">Chuyến bay:</p>
+                <p class="font-bold text-slate-800"><?= htmlspecialchars($flight) ?></p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-400">Hành trình:</p>
+                <p class="font-bold text-slate-800"><?= htmlspecialchars($route) ?></p>
+            </div>
+            <div>
+                <p class="text-xs text-slate-400">Khởi hành:</p>
+                <p class="font-bold text-slate-800"><?= htmlspecialchars($departTime) ?> • <?= htmlspecialchars($gate) ?></p>
+            </div>
+            <?php if (!empty($seats)): ?>
+                <div>
+                    <p class="text-xs text-slate-400">Ghế ngồi:</p>
+                    <p class="font-bold text-amber-600"><?= htmlspecialchars($seatsStr) ?></p>
+                </div>
+            <?php endif; ?>
+            <div>
+                <p class="text-xs text-slate-400">Tổng thanh toán:</p>
+                <p class="font-bold text-primary"><?= number_format($total) ?>đ</p>
+            </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-3">
+            <button onclick="window.print()" class="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm transition">
+                <i class="fa-solid fa-print mr-1"></i> In vé điện tử
+            </button>
+            <a href="/WebsiteDatVe/manage-booking/manage-booking.php?code=<?= urlencode($code) ?>" class="flex-1 py-3 bg-primary hover:bg-primary-hover text-white font-bold rounded-xl text-sm text-center shadow-md shadow-sky-500/20 transition">
+                Quản lý đặt chỗ <i class="fa-solid fa-arrow-right ml-1"></i>
+            </a>
+        </div>
+    </div>
+</main>
+
+    <footer class="mt-auto bg-white border-t border-slate-200">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-12">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+                <div class="md:col-span-2">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="w-8 h-8 rounded-lg bg-primary text-white flex items-center justify-center">
+                            <i class="fa-solid fa-plane text-sm"></i>
+                        </span>
+                        <span class="text-lg font-bold text-slate-900">Booking Online</span>
+                    </div>
+                    <p class="text-xs text-slate-500 max-w-sm leading-relaxed mb-4">
+                        Hệ thống đặt vé máy bay trực tuyến chuẩn PHP & MySQL cho đồ án sinh viên.
+                    </p>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Đường dẫn nhanh</h4>
+                    <ul class="space-y-2 text-xs text-slate-500">
+                        <li><a href="/WebsiteDatVe/flights/flights.php" class="hover:text-primary">Tìm chuyến bay</a></li>
+                        <li><a href="/WebsiteDatVe/check-in/check-in.php" class="hover:text-primary">Check-in online</a></li>
+                        <li><a href="/WebsiteDatVe/flight-status/flight-status.php" class="hover:text-primary">Lịch trình bay</a></li>
+                        <li><a href="/WebsiteDatVe/contact/contact.php" class="hover:text-primary">Liên hệ hỗ trợ</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Hỗ trợ khách hàng</h4>
+                    <ul class="space-y-2 text-xs text-slate-500">
+                        <li>Hotline: 1900 6868</li>
+                        <li>Email: support@bookingonline.vn</li>
+                        <li>Thời gian: 24/7 cả ngày lễ</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="pt-8 border-t border-slate-100 text-center text-xs text-slate-400">
+                &copy; <?= date('Y') ?> Booking Online. Đồ án lập trình Web PHP & JavaScript.
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
